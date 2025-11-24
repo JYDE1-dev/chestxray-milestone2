@@ -78,23 +78,3 @@ Predictions (sorted)
 Detected labels
 
 Grad-CAM explanations
-
-
-## How to Run Locally
-### 1. Activate Virtual Environment
-cd work_Project
-.\workvenv\Scripts\activate
-
-### 2. Install Dependencies
-pip install -r requirements.txt
-
-### 3. Run FastAPI
-uvicorn milestone2_api:app --reload
-
-
-Open:
-
-http://127.0.0.1:8000/docs
-
-### 4. Run Streamlit UI
-streamlit run milestone2_streamlit.py
