@@ -20,7 +20,7 @@ from gradcam_utils import (
 # ============================================
 # CONFIG
 # ============================================
-MODEL_PATH = "milestone2_mobilenetv2.h5"
+MODEL_PATH = "milestone2_mobilenetv2_savedmodel"
 UPLOAD_DIR = "uploads"
 HEATMAP_DIR = "static/gradcam"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -117,6 +117,7 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("milestone2_api:app", host="0.0.0.0", port=8000, reload=True)
+
 
 
 
