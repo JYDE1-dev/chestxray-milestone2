@@ -3,6 +3,7 @@
 import os
 import uuid
 import numpy as np
+import tensorflow as tf
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -37,9 +38,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print("Loading model...")
-model = load_model(MODEL_PATH)
-print("Model loaded.")
+MODEL_PATH = "milestone2_mobilenetv2_savedmodel"
+print("Loading SavedModel...")
+model = tf.keras.models.load_model(MODEL_PATH)
+print("Model Loaded Successfully.")
 
 
 def preprocess_pil_image(pil_img):
@@ -115,3 +117,4 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("milestone2_api:app", host="0.0.0.0", port=8000, reload=True)
+
