@@ -38,10 +38,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MODEL_PATH = "milestone2_mobilenetv2_savedmodel"
-print("Loading SavedModel...")
-model = tf.keras.models.load_model(MODEL_PATH)
-print("Model Loaded Successfully.")
+print("Loading SavedModel using TFSMLayer...")
+model = keras.layers.TFSMLayer(MODEL_PATH, call_endpoint="serving_default")
+print("Model loaded successfully.")
 
 
 def preprocess_pil_image(pil_img):
@@ -117,4 +116,5 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("milestone2_api:app", host="0.0.0.0", port=8000, reload=True)
+
 
