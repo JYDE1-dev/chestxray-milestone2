@@ -3,6 +3,7 @@
 import os
 import uuid
 import numpy as np
+import keras
 import tensorflow as tf
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -116,5 +117,6 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("milestone2_api:app", host="0.0.0.0", port=8000, reload=True)
+
 
 
