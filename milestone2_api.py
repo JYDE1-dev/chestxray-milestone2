@@ -14,9 +14,11 @@ from tensorflow import keras
 # ========================
 from gradcam_utils import (
     IMG_SIZE,
-    CLASS_NAMES,
+    NIH_LABELS,       # Replace CLASS_NAMES -> NIH_LABELS (your utils uses this)
     generate_gradcam_overlays
 )
+
+CLASS_NAMES = NIH_LABELS  # Alias for clarity
 
 # ========================
 # LOAD SAVEDMODEL USING TFSMLayer
@@ -72,13 +74,19 @@ async def predict(
 ):
     try:
         # -----------------------------
-        # READ FILE
+        # SAVE UPLOADED FILE
         # -----------------------------
-        file_bytes = await file.read()
-        img = Image.open(
-            io.BytesIO(file_bytes)
-        ).convert("RGB").resize(IMG_SIZE)
+        unique_name = f"{uuid.uuid4().hex}.png"
+        temp_path = os.path.join(UPLOAD_DIR, unique_name)
 
+        file_bytes = await file.read()
+        with open(temp_path, "wb") as f:
+            f.write(file_bytes)
+
+        # -----------------------------
+        # IMAGE PREPROCESSING
+        # -----------------------------
+        img = Image.open(temp_path).convert("RGB").resize(IMG_SIZE)
         arr = np.array(img) / 255.0
         arr = np.expand_dims(arr, axis=0)
 
@@ -103,22 +111,33 @@ async def predict(
             final_labels = [{"label": "No significant abnormality", "score": 0.0}]
 
         # -----------------------------
-        # OPTIONAL: GRAD-CAM OVERLAYS
+        # OPTIONAL: GENERATE GRAD-CAM
         # -----------------------------
         heatmap_files = []
         if return_heatmaps:
-            heatmap_files = generate_gradcam_overlays(
-                model=model,
-                image_array=arr,
-                class_names=CLASS_NAMES,
-                save_dir=GRADCAM_DIR
+            overlays = generate_gradcam_overlays(
+                model,
+                temp_path,             # REQUIRED image_path
+                preds.tolist(),        # prediction vector
+                labels=CLASS_NAMES,
+                threshold=threshold,
+                output_dir=GRADCAM_DIR
             )
 
+            # overlays = list of (label, filepath)
+            heatmap_files = [
+                {"label": label, "url": f"/static/gradcam/{os.path.basename(path)}"}
+                for label, path in overlays
+            ]
+
+        # -----------------------------
+        # RETURN SUCCESS
+        # -----------------------------
         return JSONResponse(
             content={
                 "status": "success",
                 "predictions": final_labels,
-                "heatmaps": heatmap_files,
+                "heatmaps": heatmap_files
             }
         )
 
@@ -130,4 +149,3 @@ async def predict(
                 "message": str(e)
             }
         )
-
