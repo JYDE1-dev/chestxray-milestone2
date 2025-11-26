@@ -1,3 +1,4 @@
+import io
 import os
 import uuid
 import numpy as np
@@ -129,3 +130,4 @@ async def predict(
                 "message": str(e)
             }
         )
+
