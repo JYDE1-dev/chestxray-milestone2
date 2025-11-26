@@ -9,35 +9,33 @@ from PIL import Image
 import tensorflow as tf
 from tensorflow import keras
 
-# ========================
-# IMPORT GRADCAM UTILS
-# ========================
+# ================================
+# IMPORT GRADCAM UTILITIES
+# ================================
 from gradcam_utils import (
     IMG_SIZE,
-    NIH_LABELS,       # Replace CLASS_NAMES -> NIH_LABELS (your utils uses this)
+    NIH_LABELS as CLASS_NAMES,
     generate_gradcam_overlays
 )
 
-CLASS_NAMES = NIH_LABELS  # Alias for clarity
+# ================================
+# MODEL PATH (.keras model)
+# ================================
+MODEL_PATH = "milestone2_mobilenetv2.keras"
 
-# ========================
-# LOAD SAVEDMODEL USING TFSMLayer
-# ========================
-MODEL_PATH = "milestone2_mobilenetv2_savedmodel"
-
-print("Loading SavedModel using TFSMLayer...")
-model = keras.layers.TFSMLayer(MODEL_PATH, call_endpoint="serving_default")
+print("Loading .keras model...")
+model = keras.models.load_model(MODEL_PATH)
 print("Model loaded successfully!")
 
-# ========================
-# FASTAPI APP
-# ========================
+# ================================
+# FASTAPI INITIALIZATION
+# ================================
 app = FastAPI(
     title="Milestone 2 Chest X-ray API",
     version="1.0.0",
 )
 
-# CORS
+# Allow all CORS for testing
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -46,26 +44,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Directory for uploaded files
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Directory for GradCAM results
+# ================================
+# FOLDERS
+# ================================
+UPLOAD_DIR = "uploads"
 GRADCAM_DIR = "static/gradcam"
+
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(GRADCAM_DIR, exist_ok=True)
 
 
-# =======================================
+# ================================
 # ROOT ROUTE
-# =======================================
+# ================================
 @app.get("/")
 def root():
     return {"message": "Milestone 2 API is running successfully!"}
 
 
-# =======================================
+# ================================
 # PREDICT ROUTE
-# =======================================
+# ================================
 @app.post("/predict")
 async def predict(
     file: UploadFile = File(...),
@@ -73,66 +73,68 @@ async def predict(
     return_heatmaps: bool = Form(False)
 ):
     try:
-        # -----------------------------
-        # SAVE UPLOADED FILE
-        # -----------------------------
-        unique_name = f"{uuid.uuid4().hex}.png"
-        temp_path = os.path.join(UPLOAD_DIR, unique_name)
-
+        # ---------------------------------
+        # Save uploaded file temporarily
+        # ---------------------------------
         file_bytes = await file.read()
+        ext = file.filename.split('.')[-1]
+        temp_name = f"{uuid.uuid4()}.{ext}"
+        temp_path = os.path.join(UPLOAD_DIR, temp_name)
+
         with open(temp_path, "wb") as f:
             f.write(file_bytes)
 
-        # -----------------------------
-        # IMAGE PREPROCESSING
-        # -----------------------------
-        img = Image.open(temp_path).convert("RGB").resize(IMG_SIZE)
+        # ---------------------------------
+        # Preprocess image
+        # ---------------------------------
+        img = Image.open(io.BytesIO(file_bytes)).convert("RGB").resize(IMG_SIZE)
         arr = np.array(img) / 255.0
         arr = np.expand_dims(arr, axis=0)
 
-        # -----------------------------
-        # RUN INFERENCE (NO .predict)
-        # -----------------------------
-        output_dict = model(arr, training=False)
+        # ---------------------------------
+        # Run inference
+        # ---------------------------------
+        preds = model.predict(arr)[0]  # shape = (num_classes,)
 
-        # Take output from the dict
-        output_tensor = list(output_dict.values())[0]
-        preds = output_tensor.numpy()[0]  # shape = (num_classes,)
-
-        # -----------------------------
-        # THRESHOLD MULTILABEL LOGIC
-        # -----------------------------
+        # ---------------------------------
+        # Apply threshold
+        # ---------------------------------
         final_labels = []
         for idx, score in enumerate(preds):
             if score >= threshold:
-                final_labels.append({"label": CLASS_NAMES[idx], "score": float(score)})
+                final_labels.append({
+                    "label": CLASS_NAMES[idx],
+                    "score": float(score)
+                })
 
         if len(final_labels) == 0:
             final_labels = [{"label": "No significant abnormality", "score": 0.0}]
 
-        # -----------------------------
-        # OPTIONAL: GENERATE GRAD-CAM
-        # -----------------------------
+        # ---------------------------------
+        # Optional: GRAD-CAM
+        # ---------------------------------
         heatmap_files = []
+
         if return_heatmaps:
             overlays = generate_gradcam_overlays(
-                model,
-                temp_path,             # REQUIRED image_path
-                preds.tolist(),        # prediction vector
+                model=model,
+                image_path=temp_path,
+                pred_probs=preds.tolist(),
                 labels=CLASS_NAMES,
                 threshold=threshold,
                 output_dir=GRADCAM_DIR
             )
 
-            # overlays = list of (label, filepath)
-            heatmap_files = [
-                {"label": label, "url": f"/static/gradcam/{os.path.basename(path)}"}
-                for label, path in overlays
-            ]
+            # Convert to public URLs
+            for label, path in overlays:
+                heatmap_files.append({
+                    "label": label,
+                    "file": f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/{path.replace(os.sep, '/')}"
+                })
 
-        # -----------------------------
-        # RETURN SUCCESS
-        # -----------------------------
+        # ---------------------------------
+        # RETURN JSON RESPONSE
+        # ---------------------------------
         return JSONResponse(
             content={
                 "status": "success",
