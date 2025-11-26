@@ -14,7 +14,7 @@ NIH_LABELS = [
     "Consolidation", "Edema", "Emphysema", "Fibrosis",
     "Pleural_Thickening", "Hernia"
 ]
-
+CLASS_NAMES = NIH_LABELS
 IMG_SIZE = (224, 224)
 
 
@@ -123,3 +123,4 @@ def generate_gradcam_overlays(
             overlays.append((label, save_path))
 
     return overlays
+
