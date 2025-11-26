@@ -1,36 +1,40 @@
-# milestone2_api.py
-
 import os
 import uuid
 import numpy as np
-import keras
-import tensorflow as tf
-from fastapi import FastAPI, File, UploadFile, Form
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from tensorflow.keras.models import load_model
 from PIL import Image
+import tensorflow as tf
+from tensorflow import keras
 
+# ========================
+# IMPORT GRADCAM UTILS
+# ========================
 from gradcam_utils import (
-    NIH_LABELS,
     IMG_SIZE,
-    generate_gradcam_overlays,
+    CLASS_NAMES,
+    generate_gradcam_overlays
 )
 
-# ============================================
-# CONFIG
-# ============================================
+# ========================
+# LOAD SAVEDMODEL USING TFSMLayer
+# ========================
 MODEL_PATH = "milestone2_mobilenetv2_savedmodel"
-UPLOAD_DIR = "uploads"
-HEATMAP_DIR = "static/gradcam"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(HEATMAP_DIR, exist_ok=True)
 
-# ============================================
-# APP INIT
-# ============================================
-app = FastAPI(title="Milestone 2 Chest X-ray API")
+print("Loading SavedModel using TFSMLayer...")
+model = keras.layers.TFSMLayer(MODEL_PATH, call_endpoint="serving_default")
+print("Model loaded successfully!")
 
+# ========================
+# FASTAPI APP
+# ========================
+app = FastAPI(
+    title="Milestone 2 Chest X-ray API",
+    version="1.0.0",
+)
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,85 +43,89 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print("Loading SavedModel using TFSMLayer...")
-model = keras.layers.TFSMLayer(MODEL_PATH, call_endpoint="serving_default")
-print("Model loaded successfully.")
+# Directory for uploaded files
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Directory for GradCAM results
+GRADCAM_DIR = "static/gradcam"
+os.makedirs(GRADCAM_DIR, exist_ok=True)
 
 
-def preprocess_pil_image(pil_img):
-    """Convert PIL image to model-ready numpy array (1, 224, 224, 3)."""
-    pil_img = pil_img.convert("RGB").resize(IMG_SIZE)
-    arr = np.array(pil_img) / 255.0
-    arr = np.expand_dims(arr, axis=0)
-    return arr
-
-
+# =======================================
+# ROOT ROUTE
+# =======================================
 @app.get("/")
 def root():
-    return {"message": "Milestone 2 Chest X-Ray API is running."}
+    return {"message": "Milestone 2 API is running successfully!"}
 
 
+# =======================================
+# PREDICT ROUTE
+# =======================================
 @app.post("/predict")
 async def predict(
     file: UploadFile = File(...),
-    threshold: float = Form(0.3),
-    return_heatmaps: bool = Form(False),
+    threshold: float = Form(0.5),
+    return_heatmaps: bool = Form(False)
 ):
-    """
-    Upload a chest X-ray image and get multi-label predictions.
-    Optionally returns Grad-CAM heatmaps.
-    """
-    # Save uploaded file
-    file_ext = os.path.splitext(file.filename)[1]
-    unique_name = f"{uuid.uuid4().hex}{file_ext}"
-    saved_path = os.path.join(UPLOAD_DIR, unique_name)
+    try:
+        # -----------------------------
+        # READ FILE
+        # -----------------------------
+        file_bytes = await file.read()
+        img = Image.open(
+            io.BytesIO(file_bytes)
+        ).convert("RGB").resize(IMG_SIZE)
 
-    with open(saved_path, "wb") as f:
-        f.write(await file.read())
+        arr = np.array(img) / 255.0
+        arr = np.expand_dims(arr, axis=0)
 
-    # Preprocess
-    pil_img = Image.open(saved_path)
-    arr = preprocess_pil_image(pil_img)
+        # -----------------------------
+        # RUN INFERENCE (NO .predict)
+        # -----------------------------
+        output_dict = model(arr, training=False)
 
-    # Predict
-    preds = model.predict(arr)[0]  # shape (14,)
-    prob_dict = {label: float(preds[i]) for i, label in enumerate(NIH_LABELS)}
+        # Take output from the dict
+        output_tensor = list(output_dict.values())[0]
+        preds = output_tensor.numpy()[0]  # shape = (num_classes,)
 
-    predicted_labels = [
-        label for i, label in enumerate(NIH_LABELS) if preds[i] >= threshold
-    ]
+        # -----------------------------
+        # THRESHOLD MULTILABEL LOGIC
+        # -----------------------------
+        final_labels = []
+        for idx, score in enumerate(preds):
+            if score >= threshold:
+                final_labels.append({"label": CLASS_NAMES[idx], "score": float(score)})
 
-    response = {
-        "probabilities": prob_dict,
-        "predicted_labels": predicted_labels,
-        "threshold": threshold,
-        "heatmaps": [],
-        "image_path": saved_path,
-    }
+        if len(final_labels) == 0:
+            final_labels = [{"label": "No significant abnormality", "score": 0.0}]
 
-    if return_heatmaps:
-        overlays = generate_gradcam_overlays(
-            model,
-            saved_path,
-            preds,
-            labels=NIH_LABELS,
-            threshold=threshold,
-            output_dir=HEATMAP_DIR,
+        # -----------------------------
+        # OPTIONAL: GRAD-CAM OVERLAYS
+        # -----------------------------
+        heatmap_files = []
+        if return_heatmaps:
+            heatmap_files = generate_gradcam_overlays(
+                model=model,
+                image_array=arr,
+                class_names=CLASS_NAMES,
+                save_dir=GRADCAM_DIR
+            )
+
+        return JSONResponse(
+            content={
+                "status": "success",
+                "predictions": final_labels,
+                "heatmaps": heatmap_files,
+            }
         )
-        # return relative paths for client
-        heatmap_info = [
-            {"label": lbl, "path": path} for (lbl, path) in overlays
-        ]
-        response["heatmaps"] = heatmap_info
 
-    return JSONResponse(response)
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run("milestone2_api:app", host="0.0.0.0", port=8000, reload=True)
-
-
-
-
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": str(e)
+            }
+        )
