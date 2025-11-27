@@ -9,33 +9,35 @@ from PIL import Image
 import tensorflow as tf
 from tensorflow import keras
 
-# ================================
-# IMPORT GRADCAM UTILITIES
-# ================================
+# ========================
+# IMPORT GRADCAM UTILS
+# ========================
 from gradcam_utils import (
     IMG_SIZE,
-    NIH_LABELS as CLASS_NAMES,
+    NIH_LABELS,
     generate_gradcam_overlays
 )
 
-# ================================
-# MODEL PATH (.keras model)
-# ================================
+CLASS_NAMES = NIH_LABELS
+
+# ========================
+# LOAD .keras MODEL
+# ========================
 MODEL_PATH = "milestone2_mobilenetv2.keras"
 
 print("Loading .keras model...")
 model = keras.models.load_model(MODEL_PATH)
 print("Model loaded successfully!")
 
-# ================================
-# FASTAPI INITIALIZATION
-# ================================
+# ========================
+# FASTAPI APP
+# ========================
 app = FastAPI(
     title="Milestone 2 Chest X-ray API",
     version="1.0.0",
 )
 
-# Allow all CORS for testing
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -44,28 +46,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ================================
-# FOLDERS
-# ================================
+# Directory for uploads & heatmaps
 UPLOAD_DIR = "uploads"
 GRADCAM_DIR = "static/gradcam"
-
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(GRADCAM_DIR, exist_ok=True)
 
 
-# ================================
-# ROOT ROUTE
-# ================================
 @app.get("/")
 def root():
     return {"message": "Milestone 2 API is running successfully!"}
 
 
-# ================================
-# PREDICT ROUTE
-# ================================
+# =======================================
+# PREDICT ENDPOINT
+# =======================================
 @app.post("/predict")
 async def predict(
     file: UploadFile = File(...),
@@ -73,75 +68,54 @@ async def predict(
     return_heatmaps: bool = Form(False)
 ):
     try:
-        # ---------------------------------
-        # Save uploaded file temporarily
-        # ---------------------------------
+        # Save incoming file
         file_bytes = await file.read()
-        ext = file.filename.split('.')[-1]
-        temp_name = f"{uuid.uuid4()}.{ext}"
-        temp_path = os.path.join(UPLOAD_DIR, temp_name)
+        temp_filename = f"{uuid.uuid4()}.png"
+        temp_path = os.path.join(UPLOAD_DIR, temp_filename)
 
         with open(temp_path, "wb") as f:
             f.write(file_bytes)
 
-        # ---------------------------------
-        # Preprocess image
-        # ---------------------------------
+        # Prepare image
         img = Image.open(io.BytesIO(file_bytes)).convert("RGB").resize(IMG_SIZE)
         arr = np.array(img) / 255.0
         arr = np.expand_dims(arr, axis=0)
 
-        # ---------------------------------
-        # Run inference
-        # ---------------------------------
-        preds = model.predict(arr)[0]  # shape = (num_classes,)
+        # Predict
+        preds = model.predict(arr)[0].tolist()
 
-        # ---------------------------------
-        # Apply threshold
-        # ---------------------------------
+        # Thresholding
         final_labels = []
-        for idx, score in enumerate(preds):
-            if score >= threshold:
-                final_labels.append({
-                    "label": CLASS_NAMES[idx],
-                    "score": float(score)
-                })
+        for i, p in enumerate(preds):
+            if p >= threshold:
+                final_labels.append({"label": CLASS_NAMES[i], "score": float(p)})
 
-        if len(final_labels) == 0:
+        if not final_labels:
             final_labels = [{"label": "No significant abnormality", "score": 0.0}]
 
-        # ---------------------------------
-        # Optional: GRAD-CAM
-        # ---------------------------------
+        # Grad-CAM
         heatmap_files = []
-
         if return_heatmaps:
             overlays = generate_gradcam_overlays(
                 model=model,
                 image_path=temp_path,
-                pred_probs=preds.tolist(),
+                pred_probs=preds,
                 labels=CLASS_NAMES,
                 threshold=threshold,
                 output_dir=GRADCAM_DIR
             )
 
-            # Convert to public URLs
-            for label, path in overlays:
+            for lbl, path in overlays:
                 heatmap_files.append({
-                    "label": label,
-                    "file": f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/{path.replace(os.sep, '/')}"
+                    "label": lbl,
+                    "file": path.replace("\\", "/")
                 })
 
-        # ---------------------------------
-        # RETURN JSON RESPONSE
-        # ---------------------------------
-        return JSONResponse(
-            content={
-                "status": "success",
-                "predictions": final_labels,
-                "heatmaps": heatmap_files
-            }
-        )
+        return JSONResponse({
+            "status": "success",
+            "predictions": final_labels,
+            "heatmaps": heatmap_files
+        })
 
     except Exception as e:
         return JSONResponse(
