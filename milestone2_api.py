@@ -25,7 +25,7 @@ CLASS_NAMES = NIH_LABELS
 # ========================
 MODEL_PATH = "milestone2_mobilenetv2.keras"
 
-print("Loading .keras model...")
+print("Loading Keras model...")
 model = keras.models.load_model(MODEL_PATH)
 print("Model loaded successfully!")
 
@@ -125,3 +125,4 @@ async def predict(
                 "message": str(e)
             }
         )
+
