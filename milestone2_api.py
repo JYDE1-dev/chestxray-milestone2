@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from PIL import Image
 import tensorflow as tf
 from tensorflow.keras.models import load_model
+from fastapi.staticfiles import StaticFiles
 
 from gradcam_utils import (
     IMG_SIZE,
@@ -34,6 +35,8 @@ app.add_middleware(
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# Enable static file access (IMPORTANT)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 def root():
@@ -91,3 +94,4 @@ async def predict(
             status_code=500,
             content={"status": "error", "message": str(e)}
         )
+            
