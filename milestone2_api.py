@@ -10,24 +10,42 @@ from PIL import Image
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 
+# ===============================
+# IMPORTS FOR GRADCAM
+# ===============================
 from gradcam_utils import (
     IMG_SIZE,
     NIH_LABELS,
     generate_gradcam_overlays
 )
 
-# ==========================
-# CONFIG + MODEL LOAD
-# ==========================
-MODEL_PATH = "milestone2_mobilenetv2.h5"
-model = load_model(MODEL_PATH)   # Works with TF 2.13
+# ===============================
+# RENDER-WRITABLE STATIC PATHS
+# ===============================
+STATIC_RUNTIME_ROOT = "/opt/render/project/src/runtime_static"
+GRADCAM_DIR = f"{STATIC_RUNTIME_ROOT}/gradcam"
+UPLOAD_DIR = f"{STATIC_RUNTIME_ROOT}/uploads"
 
+os.makedirs(GRADCAM_DIR, exist_ok=True)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# ===============================
+# LOAD MODEL (.h5)
+# ===============================
+MODEL_PATH = "milestone2_mobilenetv2.h5"
+print("Loading model...")
+model = load_model(MODEL_PATH)
+print("Model loaded successfully!")
+
+# ===============================
+# FASTAPI SETUP
+# ===============================
 app = FastAPI(
     title="Milestone 2 Chest X-ray API",
-    version="1.0.0",
+    version="1.0.0"
 )
 
-# CORS setup
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,29 +54,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Uploads directory
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-# GradCAM output directory
-GRADCAM_DIR = "static/gradcam"
-os.makedirs(GRADCAM_DIR, exist_ok=True)
-
-# Expose static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Serve runtime static content
+app.mount("/static", StaticFiles(directory=STATIC_RUNTIME_ROOT), name="static")
 
 
-# ==========================
-# ROOT ROUTE
-# ==========================
 @app.get("/")
 def root():
-    return {"message": "Milestone 2 API (TF 2.13) Running successfully!"}
+    return {
+        "message": "Milestone 2 API (Render version) running successfully!",
+        "static_path": "/static/gradcam/"
+    }
 
 
-# ==========================
-# PREDICT ROUTE
-# ==========================
+# ===============================
+# PREDICT ENDPOINT
+# ===============================
 @app.post("/predict")
 async def predict(
     file: UploadFile = File(...),
@@ -66,34 +76,37 @@ async def predict(
     return_heatmaps: bool = Form(False)
 ):
     try:
-        # Read uploaded image
+        # -----------------------
+        # READ IMAGE
+        # -----------------------
         file_bytes = await file.read()
         img = Image.open(io.BytesIO(file_bytes)).convert("RGB").resize(IMG_SIZE)
 
-        # Preprocess
         arr = np.array(img) / 255.0
         arr = np.expand_dims(arr, axis=0)
 
-        # Inference
-        preds = model.predict(arr)[0]
+        # -----------------------
+        # MODEL PREDICTION
+        # -----------------------
+        preds = model.predict(arr)[0]  # shape = (14,)
 
-        # Multi-label thresholding
-        final_labels = [
-            {"label": NIH_LABELS[idx], "score": float(score)}
-            for idx, score in enumerate(preds)
-            if score >= threshold
-        ]
+        final_labels = []
+        for idx, score in enumerate(preds):
+            if score >= threshold:
+                final_labels.append({
+                    "label": NIH_LABELS[idx],
+                    "score": float(score)
+                })
 
         if len(final_labels) == 0:
             final_labels = [{"label": "No significant abnormality", "score": 0.0}]
 
-        # ==========================
-        # HEATMAP GENERATION
-        # ==========================
+        # -----------------------
+        # GENERATE GRADCAM
+        # -----------------------
         heatmap_files = []
 
         if return_heatmaps:
-            # Save uploaded image temporarily
             temp_filename = f"{uuid.uuid4()}.png"
             temp_path = os.path.join(UPLOAD_DIR, temp_filename)
             img.save(temp_path)
@@ -107,14 +120,15 @@ async def predict(
                 output_dir=GRADCAM_DIR
             )
 
-            # Format heatmap URLs for JSON response
-            for lbl, path in overlays:
+            # Convert internal paths → publicly accessible URLs
+            for label, internal_path in overlays:
+                filename = os.path.basename(internal_path)
+                public_url = f"/static/gradcam/{filename}"
                 heatmap_files.append({
-                    "label": lbl,
-                    "url": f"/static/gradcam/{os.path.basename(path)}"
+                    "label": label,
+                    "url": public_url
                 })
 
-        # Response
         return JSONResponse(
             content={
                 "status": "success",
